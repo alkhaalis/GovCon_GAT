@@ -1,0 +1,2 @@
+SAM_API_KEY=your_sam_api_key_here  # optional for dev
+SAM_BASE=https://api.sam.gov/prod/opportunities/v2/search
