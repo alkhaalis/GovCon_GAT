@@ -1,0 +1,73 @@
+import { IngestionAdapter, FetchArgs, clampLimit } from "./providers";
+import { Opportunity, RawNotice } from "../types";
+
+const SAM_BASE = process.env.SAM_BASE ?? "https://api.sam.gov/prod/opportunities/v2/search";
+const SAM_API_KEY = process.env.SAM_API_KEY ?? ""; // optional at dev time
+
+const sam: IngestionAdapter = {
+  key: "sam",
+
+  async fetchNotices(args: FetchArgs): Promise<RawNotice[]> {
+    const limit = clampLimit(args.limit, 25);
+    const postedFrom = args.sinceDays
+      ? new Date(Date.now() - args.sinceDays * 86400000).toISOString().slice(0, 10)
+      : undefined;
+
+    const params = new URLSearchParams({
+      limit: String(limit),
+      sort: "publish_date,desc"
+    });
+
+    if (SAM_API_KEY) params.set("api_key", SAM_API_KEY);
+    if (args.q) params.set("q", args.q);
+    if (args.naics) params.set("naics", args.naics);
+    if (postedFrom) params.set("postedFrom", postedFrom);
+
+    const url = `${SAM_BASE}?${params.toString()}`;
+    const res = await fetch(url, { next: { revalidate: 30 } });
+    if (!res.ok) throw new Error(`SAM fetch failed: ${res.status} ${res.statusText}`);
+    const json = await res.json();
+    // Defensive: different shapes exist; we just pass the notices array forward
+    const arr = (json.opportunitiesData || json.data || json.notices || []) as RawNotice[];
+    return Array.isArray(arr) ? arr : [];
+  },
+
+  normalize(raw: RawNotice): Opportunity | null {
+    // Safely dig fields with many possible keys
+    const id =
+      (raw as any).noticeId ?? (raw as any).solicitationNumber ?? (raw as any).id ?? null;
+    const title =
+      (raw as any).title ?? (raw as any).subject ?? (raw as any).noticeTitle ?? "Untitled";
+    const agency =
+      (raw as any).organizationName ?? (raw as any).department ?? (raw as any).agency ?? "Unknown";
+    const noticeUrl =
+      (raw as any).uiLink ?? (raw as any).url ?? (raw as any).link ?? "#";
+    const publish = (raw as any).publishDate ?? (raw as any).postedDate ?? null;
+    const due =
+      (raw as any).responseDate ?? (raw as any).closeDate ?? (raw as any).dueDate ?? publish;
+
+    if (!id || !noticeUrl) return null;
+
+    // Sector guess (very light heuristic)
+    const sector: Opportunity["sector"] =
+      /health|ehr|clinic|hospital/i.test(`${title} ${agency}`) ? "Health" :
+      /defen[cs]e|dod|air force|navy|army/i.test(`${title} ${agency}`) ? "Defense" :
+      /cloud|dev(sec)?ops|it|software|ai|ml|data/i.test(String(title)) ? "IT" : "Other";
+
+    return {
+      id: `sam:${id}`,
+      source: "sam",
+      sourceId: String(id),
+      title: String(title),
+      agency: String(agency),
+      country: "United States",
+      noticeUrl: String(noticeUrl),
+      publishedDate: publish ? new Date(publish).toISOString() : undefined,
+      dueDate: due ? new Date(due).toISOString() : new Date().toISOString(),
+      valueUSD: undefined,
+      sector
+    };
+  }
+};
+
+export default sam;
