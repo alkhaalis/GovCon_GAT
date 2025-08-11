@@ -1,0 +1,70 @@
+import { IngestionAdapter, FetchArgs, clampLimit } from "./providers";
+import { Opportunity } from "../types";
+
+// Simple XML→JSON parse without extra deps
+async function parseFeed(xml: string) {
+  // Very light parser using the DOM APIs available in the Edge runtime
+  const dom = new (global as any).DOMParser().parseFromString(xml, "text/xml");
+  const items = Array.from(dom.querySelectorAll("item,entry"));
+  return items.map((el: Element) => ({
+    id:
+      el.querySelector("guid")?.textContent ||
+      el.querySelector("id")?.textContent ||
+      el.querySelector("link")?.getAttribute("href") ||
+      el.querySelector("link")?.textContent ||
+      "",
+    title: el.querySelector("title")?.textContent || "Untitled",
+    link:
+      el.querySelector("link")?.getAttribute("href") ||
+      el.querySelector("link")?.textContent ||
+      "#",
+    pubDate: el.querySelector("pubDate")?.textContent || el.querySelector("updated")?.textContent,
+    summary: el.querySelector("description")?.textContent || el.querySelector("summary")?.textContent
+  }));
+}
+
+const rss: IngestionAdapter = {
+  key: "rss",
+
+  async fetchNotices(args: FetchArgs) {
+    // You pass ?feedUrl=... from the API endpoint (see route below)
+    throw new Error("rss adapter requires feedUrl (passed via endpoint, see /api/ingest).");
+  },
+
+  normalize(raw: any): Opportunity | null {
+    if (!raw.id || !raw.link) return null;
+    const title = raw.title ?? "Untitled";
+    const pub = raw.pubDate ? new Date(raw.pubDate).toISOString() : undefined;
+
+    // Sector guess
+    const sector: Opportunity["sector"] =
+      /health|ehr|clinic/i.test(title) ? "Health" :
+      /defen[cs]e/i.test(title) ? "Defense" :
+      /cloud|devops|software|it|ai|ml|data/i.test(title) ? "IT" : "Other";
+
+    return {
+      id: `rss:${raw.id}`,
+      source: "rss",
+      sourceId: String(raw.id),
+      title: String(title),
+      agency: "Unknown",
+      country: "Unknown",
+      noticeUrl: String(raw.link),
+      publishedDate: pub,
+      dueDate: pub ?? new Date().toISOString(),
+      valueUSD: undefined,
+      sector
+    };
+  }
+};
+
+// Helper so we can keep the adapter contract but still allow dynamic feeds:
+export async function fetchRssFeed(feedUrl: string, limit = 25) {
+  const res = await fetch(feedUrl, { next: { revalidate: 60 } });
+  if (!res.ok) throw new Error(`RSS fetch failed: ${res.status} ${res.statusText}`);
+  const xml = await res.text();
+  const items = await parseFeed(xml);
+  return items.slice(0, clampLimit(limit, 50));
+}
+
+export default rss;
