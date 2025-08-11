@@ -1,0 +1,19 @@
+export type Opportunity = {
+  id: string;                // canonical id (source:id)
+  title: string;
+  country: string;
+  agency: string;
+  dueDate: string;           // ISO
+  valueUSD?: number;
+  noticeUrl: string;
+  sector: "IT" | "Health" | "Infrastructure" | "Defense" | "Other";
+  language?: string;
+
+  // NEW (provenance)
+  source: "sam" | "rss";
+  sourceId: string;          // native id from the portal
+  publishedDate?: string;    // ISO
+};
+
+// Raw shape coming from any provider before normalization
+export type RawNotice = Record<string, unknown>;
