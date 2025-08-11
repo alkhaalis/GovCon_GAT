@@ -1,0 +1,23 @@
+import { Opportunity, RawNotice } from "@/lib/types";
+
+/** Standard contract for every ingestion adapter */
+export interface IngestionAdapter {
+  /** A unique provider key, e.g., "sam" or "rss" */
+  key: "sam" | "rss";
+  /** Pull a page of raw notices. Implement cursoring/paging internally. */
+  fetchNotices(args: FetchArgs): Promise<RawNotice[]>;
+  /** Convert a provider-specific notice into our canonical Opportunity */
+  normalize(raw: RawNotice): Opportunity | null;
+}
+
+export type FetchArgs = {
+  q?: string;             // free text
+  naics?: string;         // NAICS code
+  country?: string;       // hint filter
+  sinceDays?: number;     // posted within last N days
+  limit?: number;         // max records to return (provider may cap)
+};
+
+// Utility: clamp a limit to a safe range
+export const clampLimit = (n: number | undefined, max = 50) =>
+  Math.max(1, Math.min(typeof n === "number" ? n : 20, max));
