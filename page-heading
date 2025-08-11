@@ -1,0 +1,5 @@
+<div className="flex gap-2">
+  <button className="btn-primary btn" onClick={ingestNow} disabled={ingesting}>
+    {ingesting ? "Ingesting…" : "Ingest live (demo)"}
+  </button>
+</div>
