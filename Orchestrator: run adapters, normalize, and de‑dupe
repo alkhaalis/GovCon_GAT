@@ -1,0 +1,59 @@
+import type { FetchArgs, IngestionAdapter } from "./providers";
+import sam from "./sam";
+import rss, { fetchRssFeed } from "./rss";
+import { Opportunity } from "../types";
+import { createHash } from "crypto";
+
+export type IngestRequest = FetchArgs & {
+  providers: ("sam" | "rss")[];
+  rssFeedUrl?: string; // when providers includes "rss"
+};
+
+export type IngestResult = {
+  count: number;
+  providers: Record<string, number>;
+  opportunities: Opportunity[];
+};
+
+const registry: Record<"sam" | "rss", IngestionAdapter> = { sam, rss };
+
+export async function ingest(req: IngestRequest): Promise<IngestResult> {
+  const seen = new Set<string>();
+  const out: Opportunity[] = [];
+  const counts: Record<string, number> = {};
+
+  for (const key of req.providers) {
+    const adapter = registry[key];
+    if (!adapter) continue;
+
+    let raws: any[] = [];
+
+    if (key === "rss") {
+      if (!req.rssFeedUrl) continue;
+      raws = await fetchRssFeed(req.rssFeedUrl, req.limit ?? 25);
+    } else {
+      raws = await adapter.fetchNotices(req);
+    }
+
+    counts[key] = raws.length;
+
+    for (const r of raws) {
+      const opp = adapter.normalize(r);
+      if (!opp) continue;
+      const h = hashOpportunity(opp);
+      if (seen.has(h)) continue;
+      seen.add(h);
+      out.push(opp);
+    }
+  }
+
+  // Sort: newest first by publishedDate
+  out.sort((a, b) => (b.publishedDate ?? b.dueDate).localeCompare(a.publishedDate ?? a.dueDate));
+
+  return { count: out.length, providers: counts, opportunities: out };
+}
+
+function hashOpportunity(o: Opportunity) {
+  const str = `${o.source}:${o.sourceId}:${o.title}:${o.dueDate}`;
+  return createHash("sha256").update(str).digest("hex").slice(0, 16);
+}
